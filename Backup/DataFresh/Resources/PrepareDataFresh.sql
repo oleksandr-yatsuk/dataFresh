@@ -42,7 +42,7 @@ AS
 		SELECT [tablename] from #ChangedTables
 		UNION
 		SELECT DISTINCT 
-			'[' + OBJECT_SCHEMA_NAME(fkeyid) + '].[' + OBJECT_NAME(fkeyid) + ']' AS Referenced_Table
+			OBJECT_NAME(fkeyid) AS Referenced_Table
 		FROM 
 			sysreferences sr
 			INNER JOIN #ChangedTables ct ON sr.rkeyid = OBJECT_ID(ct.tablename)
@@ -54,7 +54,7 @@ AS
 
 	WHILE (@@Fetch_Status = 0)
 	BEGIN
-			SET @sql = N'Alter Table ' + @TableName + ' NOCHECK CONSTRAINT ALL'
+			SET @sql = N'Alter Table [' + @TableName + '] NOCHECK CONSTRAINT ALL'
 			EXEC sp_executesql @sql
 
 			FETCH NEXT FROM Table_Cursor INTO @TableName
@@ -62,31 +62,27 @@ AS
 
 	-- Delete All data from Changed Tables and Refill
 	DECLARE ChangedTable_Cursor CURSOR FOR
-		SELECT [tablename] FROM #ChangedTables WHERE tablename not in('[dbo].[df_ChangeTracking]', '[dbo].[dr_DeltaVersion]')
+		SELECT [tablename] FROM #ChangedTables WHERE tablename not in('df_ChangeTracking', 'dr_DeltaVersion')
 
 	OPEN ChangedTable_Cursor
 	FETCH NEXT FROM ChangedTable_Cursor INTO @TableName
 	WHILE (@@Fetch_Status = 0)
 	BEGIN
 			PRINT @TableName
-			SET @sql = N'DELETE ' + @TableName + '; DELETE df_ChangeTracking WHERE TableName=''' + @TableName + ''''
+			SET @sql = N'DELETE [' + @TableName + ']; DELETE df_ChangeTracking WHERE TableName=''' + @TableName + ''''
 			EXEC sp_executesql @sql
 			
 			SET @sql = N'IF(SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE table_name = ''' + @TableName + ''' AND IDENT_SEED(TABLE_NAME) IS NOT NULL) > 0
 			BEGIN				
-				DBCC CHECKIDENT (''' + @TableName + ''', RESEED, 0)
+				DBCC CHECKIDENT ([' + @TableName + '], RESEED, 0)
 			END'
 
 			EXEC sp_executesql @sql
-			
-			DECLARE @Table VARCHAR(255), @Schema VARCHAR(255)	
+	
 
-			SET @Table = PARSENAME(@TableName, 1)
-			SET @Schema = PARSENAME(@TableName, 2)
-
-			SET @sql = N'BULK INSERT ' + @TableName + '
-				FROM ''' + @BasePath + @Schema + '.' + @Table + '.df''
-				WITH 
+			SET @sql = N'BULK INSERT [' + @TableName + ']
+				FROM ''' + @BasePath + @TableName + '.df''
+   				WITH 
 					(
 						KEEPIDENTITY,
 						KEEPNULLS,
@@ -103,7 +99,7 @@ AS
 	FETCH FIRST FROM Table_Cursor INTO @TableName
 	WHILE (@@Fetch_Status = 0)
 	BEGIN
-			SET @sql = N'Alter Table ' + @TableName + ' CHECK CONSTRAINT ALL'
+			SET @sql = N'Alter Table [' + @TableName + '] CHECK CONSTRAINT ALL'
 			EXEC sp_executesql @sql
 
 			FETCH NEXT FROM Table_Cursor INTO @TableName
@@ -124,29 +120,28 @@ AS
 
 	DECLARE @sql NVARCHAR(4000)
 	DECLARE @TableName VARCHAR(255)
-	DECLARE @TableSchema VARCHAR(255)
 
 	DECLARE Table_Cursor CURSOR FOR
-		SELECT [table_name], [table_schema] FROM information_schema.tables WHERE table_type = 'BASE TABLE' 
+		SELECT [table_name] FROM information_schema.tables WHERE table_type = 'BASE TABLE' 
 
 	OPEN Table_Cursor
-	FETCH NEXT FROM Table_Cursor INTO @TableName, @TableSchema
+	FETCH NEXT FROM Table_Cursor INTO @TableName
 
 	WHILE (@@Fetch_Status = 0)
 	BEGIN
-			SET @sql = N'IF EXISTS (SELECT * FROM dbo.SYSOBJECTS WHERE ID = Object_ID(N''[' + @TableSchema + '].[trig_df_ChangeTracking_' + @TableName + ']'') AND OBJECTPROPERTY(ID, N''IsTrigger'') = 1) 
-				DROP TRIGGER [' + @TableSchema + '].[trig_df_ChangeTracking_' + @TableName + ']'
+			SET @sql = N'IF EXISTS (SELECT * FROM dbo.SYSOBJECTS WHERE ID = Object_ID(N''[dbo].[trig_df_ChangeTracking_' + @TableName + ']'') AND OBJECTPROPERTY(ID, N''IsTrigger'') = 1) 
+				DROP TRIGGER [dbo].[trig_df_ChangeTracking_' + @TableName + ']'
 			EXEC sp_executesql @sql
 
-			SET @sql = N'CREATE TRIGGER [' + @TableSchema + '].[trig_df_ChangeTracking_' + @TableName + '] on [' + @TableSchema + '].[' + @TableName + '] for insert, update, delete
-			as 
+			SET @sql = N'CREATE TRIGGER [dbo].[trig_df_ChangeTracking_' + @TableName + '] on [' + @TableName + '] for insert, update, delete
+			as
 			SET NOCOUNT ON
-			INSERT INTO df_ChangeTracking (tablename) VALUES (''[' + @TableSchema + '].[' + @TableName + ']'')
+			INSERT INTO df_ChangeTracking (tablename) VALUES (''' + @TableName + ''')
 			SET NOCOUNT OFF' 
 			
 			EXEC sp_executesql @sql
 
-			FETCH NEXT FROM Table_Cursor INTO @TableName, @TableSchema
+			FETCH NEXT FROM Table_Cursor INTO @TableName
 
 	END
 	CLOSE Table_Cursor
